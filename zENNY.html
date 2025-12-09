@@ -1,0 +1,1495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZennY - The AI Wallet | NEXIUM</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        
+        :root {
+            --color-primary: #9B98EE; 
+            --color-secondary: #6B65D8; 
+            --color-background: #F8F7FF; 
+            --color-card: #FFFFFF;
+            --color-text-dark: #3730A3; 
+        }
+
+        .lavender-bg { background-color: var(--color-background); }
+        .lavender-card { background-color: var(--color-card); }
+        .lavender-text-primary { color: var(--color-primary); }
+        .lavender-text-secondary { color: var(--color-secondary); }
+        .lavender-text-dark { color: var(--color-text-dark); }
+        .lavender-border { border-color: var(--color-primary); }
+        .lavender-button { background-color: var(--color-secondary); color: white; transition: background-color 0.2s; }
+        .lavender-button:hover { background-color: #5A53C5; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+        
+        #ai-chat-history::-webkit-scrollbar { width: 8px; }
+        #ai-chat-history::-webkit-scrollbar-track { background: var(--color-background); }
+        #ai-chat-history::-webkit-scrollbar-thumb { background: var(--color-primary); border-radius: 4px; }
+        #ai-chat-history::-webkit-scrollbar-thumb:hover { background: var(--color-secondary); }
+
+        
+        @keyframes fill-bar {
+            from { width: 0%; }
+            to { width: var(--budget-fill); }
+        }
+        .budget-bar-fill {
+            animation: fill-bar 1.5s ease-out forwards;
+        }
+
+        
+        .icon { display: inline-block; }
+
+        
+        .modal { transition: opacity 0.3s, visibility 0.3s; }
+        .modal-content { transition: transform 0.3s; }
+    </style>
+</head>
+<body class="lavender-bg font-sans min-h-screen antialiased">
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, addDoc, setDoc, onSnapshot, collection, query, serverTimestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        
+        window.firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        window.appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        window.initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        
+        const isFirebaseConfigPresent = Object.keys(window.firebaseConfig).length > 0;
+
+        if (isFirebaseConfigPresent) {
+            const app = initializeApp(window.firebaseConfig);
+            window.db = getFirestore(app);
+            window.auth = getAuth(app);
+            window.isFirestoreAvailable = true;
+
+            window.addDoc = addDoc;
+            window.collection = collection;
+            window.serverTimestamp = serverTimestamp;
+            setLogLevel('Debug');
+
+            window.setupFirebase = async () => {
+                try {
+                    if (window.initialAuthToken) {
+                        await signInWithCustomToken(window.auth, window.initialAuthToken);
+                    } else {
+                        await signInAnonymously(window.auth);
+                    }
+                } catch (error) {
+                    console.error("Firebase Auth Error:", error);
+                }
+
+                onAuthStateChanged(window.auth, (user) => {
+                    if (user) {
+                        window.userId = user.uid;
+                        window.loadUserData(); 
+                        window.loadGoalsData(); 
+                        window.loadChallengesData(); 
+                    } else {
+                        console.log("User signed out or failed to sign in.");
+                        window.userId = 'mock-user-' + crypto.randomUUID(); 
+                        window.loadUserData(); 
+                        window.loadGoalsData();
+                        window.loadChallengesData();
+                    }
+                });
+            };
+
+            
+            window.setupFirebase();
+
+        } else {
+            window.db = null;
+            window.isFirestoreAvailable = false;
+            window.userId = 'local-mock-user';
+
+            console.warn("Firebase configuration missing. Using local storage for data persistence.");
+
+            
+            const triggerMockSnapshot = () => {
+                window.loadUserData();
+                window.loadGoalsData();
+                window.loadChallengesData();
+            };
+
+            
+            window.addDoc = async (collectionRef, data) => {
+                const collectionName = collectionRef.path;
+                const key = `zenny_local_${collectionName}`;
+                
+                let items = JSON.parse(localStorage.getItem(key) || '[]');
+                const newId = crypto.randomUUID();
+                
+                const newDoc = { 
+                    id: newId, 
+                    ...data, 
+                    timestamp: { seconds: Date.now() / 1000 },
+                    date: data.date || new Date().toISOString().split('T')[0]
+                };
+                items.push(newDoc);
+                localStorage.setItem(key, JSON.stringify(items));
+                
+                
+                triggerMockSnapshot();
+                return { id: newId };
+            };
+            
+            
+            window.collection = (db, path) => ({ path: path.split('/').pop() });
+
+    
+            window.serverTimestamp = () => ({ seconds: Date.now() / 1000 });
+            
+    
+            const mockLoadData = (collectionName) => {
+                const key = `zenny_local_${collectionName}`;
+                let items = JSON.parse(localStorage.getItem(key) || '[]');
+                return items;
+            };
+
+            
+            window.loadUserData = () => {
+                const transactions = mockLoadData('transactions');
+                transactions.sort((a, b) => (b.timestamp?.seconds) - (a.timestamp?.seconds));
+                window.transactionsData = transactions;
+                window.calculateDashboardMetrics();
+                window.renderTransactions();
+            };
+
+            window.loadGoalsData = () => {
+                window.goalsData = mockLoadData('goals');
+                window.calculateDashboardMetrics();
+            };
+
+            window.loadChallengesData = () => {
+                window.challengesData = mockLoadData('challenges');
+                window.calculateDashboardMetrics();
+                window.renderChallenges();
+            };
+            
+        
+            window.loadUserData(); 
+            window.loadGoalsData();
+            window.loadChallengesData();
+        }
+    </script>
+
+    
+    <div id="name-modal-overlay" class="fixed inset-0 bg-gray-900 bg-opacity-75 z-50 flex items-center justify-center transition-opacity duration-300 opacity-100">
+        <div class="lavender-card p-8 rounded-2xl shadow-2xl w-full max-w-sm transform scale-100 transition-transform duration-300">
+            <h2 class="text-3xl font-extrabold lavender-text-secondary mb-2 flex items-center">
+                <span class="icon mr-2" data-lucide="sparkles" style="width: 24px; height: 24px;"></span>
+                Welcome to ZennY!
+            </h2>
+            <p class="text-gray-600 mb-6">Please enter your name to personalize your AI Wallet experience.</p>
+            
+            <input type="text" id="user-name-input" placeholder="Your Name" class="w-full p-3 border border-indigo-300 rounded-xl focus:ring-2 focus:ring-purple-400 focus:border-purple-400 outline-none mb-4" required>
+            
+            <button id="start-app-button" class="lavender-button w-full py-3 rounded-xl font-bold text-lg">
+                Start My Wallet
+            </button>
+        </div>
+    </div>
+    
+    <div id="transaction-modal" class="modal fixed inset-0 bg-gray-900 bg-opacity-75 z-40 flex items-center justify-center invisible opacity-0">
+        <div class="modal-content lavender-card p-6 rounded-2xl shadow-2xl w-full max-w-lg transform translate-y-full">
+            <h3 class="text-2xl font-bold lavender-text-dark mb-4 border-b pb-2 border-gray-100">Add New Transaction</h3>
+            
+            <form id="transaction-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                    <select id="tx-type" class="w-full p-3 border border-indigo-300 rounded-xl focus:ring-2 focus:ring-purple-400 outline-none">
+                        <option value="Income">Income (+)</option>
+                        <option value="Expense">Expense (-)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Amount (₹)</label>
+                    <input type="number" id="tx-amount" placeholder="e.g., 5000" min="1" class="w-full p-3 border border-indigo-300 rounded-xl focus:ring-2 focus:ring-purple-400 outline-none" required>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                    <select id="tx-category" class="w-full p-3 border border-indigo-300 rounded-xl focus:ring-2 focus:ring-purple-400 outline-none">
+                        
+                        <optgroup label="Income">
+                            <option value="Salary">💰 Salary</option>
+                            <option value="Investment Return">📈 Investment Return</option>
+                            <option value="Gift">🎁 Gift / Other Income</option>
+                        </optgroup>
+                
+                        <optgroup label="Expenses">
+                            <option value="Food">🍜 Food</option>
+                            <option value="Drinks">☕ Drinks / Coffee</option>
+                            <option value="Stationery">✏️ Stationery</option>
+                            <option value="Rent">🏠 Rent / EMI</option>
+                            <option value="Investment">🌟 Investment (SIP)</option>
+                            <option value="Groceries">🛒 Groceries</option>
+                            <option value="Online Order">📦 Online Order</option>
+                            <option value="Other">📍 Other Expenses</option>
+                        </optgroup>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                    <input type="date" id="tx-date" class="w-full p-3 border border-indigo-300 rounded-xl focus:ring-2 focus:ring-purple-400 outline-none" required>
+                </div>
+
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" id="close-tx-modal" class="px-6 py-2 rounded-xl text-gray-600 hover:bg-gray-100 font-semibold">Cancel</button>
+                    <button type="submit" class="lavender-button px-6 py-2 rounded-xl font-bold">Save Transaction</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <div id="goal-modal" class="modal fixed inset-0 bg-gray-900 bg-opacity-75 z-40 flex items-center justify-center invisible opacity-0">
+        <div class="modal-content lavender-card p-6 rounded-2xl shadow-2xl w-full max-w-lg transform translate-y-full">
+            <h3 class="text-2xl font-bold lavender-text-dark mb-4 border-b pb-2 border-gray-100">Set New Savings Goal</h3>
+            
+            <form id="goal-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Goal Name</label>
+                    <input type="text" id="goal-name-input" placeholder="e.g., European Vacation Fund" class="w-full p-3 border border-indigo-300 rounded-xl focus:ring-2 focus:ring-purple-400 outline-none" required>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Target Amount (₹)</label>
+                        <input type="number" id="goal-target-input" placeholder="e.g., 100000" min="100" class="w-full p-3 border border-indigo-300 rounded-xl focus:ring-2 focus:ring-purple-400 outline-none" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Currently Saved (₹)</label>
+                        <input type="number" id="goal-saved-input" placeholder="e.g., 5000 (can be 0)" min="0" class="w-full p-3 border border-indigo-300 rounded-xl focus:ring-2 focus:ring-purple-400 outline-none" value="0">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Target Due Date</label>
+                    <input type="date" id="goal-date-input" class="w-full p-3 border border-indigo-300 rounded-xl focus:ring-2 focus:ring-purple-400 outline-none" required>
+                </div>
+
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" id="close-goal-modal" class="px-6 py-2 rounded-xl text-gray-600 hover:bg-gray-100 font-semibold">Cancel</button>
+                    <button type="submit" class="lavender-button px-6 py-2 rounded-xl font-bold">Create Goal</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <div id="challenge-modal" class="modal fixed inset-0 bg-gray-900 bg-opacity-75 z-40 flex items-center justify-center invisible opacity-0">
+        <div class="modal-content lavender-card p-6 rounded-2xl shadow-2xl w-full max-w-2xl transform translate-y-full">
+            <h3 class="text-2xl font-bold lavender-text-dark mb-4 border-b pb-2 border-gray-100 flex justify-between items-center">
+                Gamified Challenges & Streaks
+                <button id="add-new-challenge-btn" class="lavender-button text-xs px-3 py-1 rounded-xl flex items-center font-semibold">
+                    <span class="icon mr-1" data-lucide="zap" style="width: 14px; height: 14px;"></span>
+                    New Challenge
+                </button>
+            </h3>
+            
+            <div id="challenge-list-container" class="space-y-4 mb-6 h-64 overflow-y-auto pr-2 scrollbar-hide">
+                
+            </div>
+            
+            <form id="challenge-form" class="space-y-3 p-4 bg-indigo-50 rounded-xl border border-indigo-200 hidden">
+                <h4 class="text-lg font-bold lavender-text-dark">Define a New Collaboration Goal</h4>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Challenge Name</label>
+                    <input type="text" id="challenge-name-input" placeholder="e.g., No Food Delivery 30 Days" class="w-full p-2 border border-indigo-300 rounded-lg focus:ring-1 focus:ring-purple-400 outline-none" required>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Target Savings (₹)</label>
+                        <input type="number" id="challenge-target-input" placeholder="e.g., 5000" min="100" class="w-full p-2 border border-indigo-300 rounded-lg focus:ring-1 focus:ring-purple-400 outline-none" required>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Collaborating Friend (Mock ID)</label>
+                        <input type="text" id="challenge-friend-input" placeholder="e.g., Aakash S." class="w-full p-2 border border-indigo-300 rounded-lg focus:ring-1 focus:ring-purple-400 outline-none">
+                    </div>
+                </div>
+
+                <div class="flex justify-end space-x-3 pt-2">
+                    <button type="button" id="cancel-new-challenge" class="px-4 py-2 rounded-lg text-gray-600 hover:bg-white font-semibold text-sm">Cancel</button>
+                    <button type="submit" class="lavender-button px-4 py-2 rounded-lg font-bold text-sm">Save Challenge</button>
+                </div>
+            </form>
+
+            <div class="flex justify-end pt-4 border-t border-gray-100">
+                <button type="button" id="close-challenge-modal" class="px-6 py-2 rounded-xl text-gray-600 hover:bg-gray-100 font-semibold">Done</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="profile-modal" class="modal fixed inset-0 bg-gray-900 bg-opacity-75 z-40 flex items-center justify-center invisible opacity-0">
+        <div class="modal-content lavender-card p-6 rounded-2xl shadow-2xl w-full max-w-sm transform translate-y-full">
+            <h3 class="text-2xl font-bold lavender-text-dark mb-4 border-b pb-2 border-gray-100">Profile Settings</h3>
+            
+            <form id="profile-form" class="space-y-4">
+                <div class="text-center mb-4">
+                    <div id="profile-modal-preview" class="w-24 h-24 bg-indigo-200 rounded-full mx-auto flex items-center justify-center text-indigo-700 text-3xl font-bold overflow-hidden">JD</div>
+                    <p class="text-xs text-gray-500 mt-2">Profile Picture Preview</p>
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Upload Photo</label>
+                    
+                    <input type="file" id="profile-img-file-input" accept="image/*" class="w-full p-2 border border-indigo-300 rounded-xl focus:ring-2 focus:ring-purple-400 outline-none text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                    <p class="text-xs text-gray-500 mt-1">or paste a URL below (upload takes priority).</p>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Image URL (Optional)</label>
+                    <input type="url" id="profile-img-url-input" placeholder="Paste image URL (e.g., https://...)" class="w-full p-3 border border-indigo-300 rounded-xl focus:ring-2 focus:ring-purple-400 outline-none">
+                </div>
+
+                <div class="flex justify-between items-center space-x-3 pt-4">
+                    <button type="button" id="clear-profile-img" class="text-sm text-red-500 hover:text-red-700 font-semibold">Clear Image</button>
+                    <div class="flex space-x-3">
+                        <button type="button" id="close-profile-modal" class="px-4 py-2 rounded-xl text-gray-600 hover:bg-gray-100 font-semibold">Cancel</button>
+                        <button type="submit" class="lavender-button px-4 py-2 rounded-xl font-bold">Save Profile</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <div id="app" class="flex flex-col md:flex-row min-h-screen opacity-0 transition-opacity duration-500">
+
+        
+        <nav id="sidebar" class="w-full md:w-64 bg-white md:shadow-lg p-4 md:p-6 flex flex-col fixed md:relative z-20 transition-transform duration-300 transform md:transform-none">
+            
+            
+            <div class="mb-8 hidden md:block">
+                <h1 class="text-3xl font-extrabold flex items-center lavender-text-secondary">
+                    <span class="mr-2 icon" data-lucide="gem" style="width: 24px; height: 24px;"></span>
+                    ZennY
+                </h1>
+                <p class="text-xs font-semibold uppercase tracking-widest text-gray-400">by NEXIUM</p>
+            </div>
+            
+            
+            <ul class="flex flex-row md:flex-col space-x-6 md:space-x-0 md:space-y-4 overflow-x-auto scrollbar-hide">
+                <li class="nav-item cursor-pointer text-sm font-medium p-2 md:px-4 md:py-3 rounded-xl transition-colors bg-indigo-100/50 text-indigo-700" data-section="dashboard">
+                    <span class="icon mr-2" data-lucide="layout-dashboard"></span>
+                    Dashboard
+                </li>
+                <li class="nav-item cursor-pointer text-sm font-medium p-2 md:px-4 md:py-3 rounded-xl transition-colors text-gray-600 hover:bg-indigo-50 hover:text-indigo-700" data-section="budget">
+                    <span class="icon mr-2" data-lucide="bar-chart-3"></span>
+                    Budget & AI Tracking
+                </li>
+                <li class="nav-item cursor-pointer text-sm font-medium p-2 md:px-4 md:py-3 rounded-xl transition-colors text-gray-600 hover:bg-indigo-50 hover:text-indigo-700" data-section="investments">
+                    <span class="icon mr-2" data-lucide="trending-up"></span>
+                    Investment Guidance
+                </li>
+                <li class="nav-item cursor-pointer text-sm font-medium p-2 md:px-4 md:py-3 rounded-xl transition-colors text-gray-600 hover:bg-indigo-50 hover:text-indigo-700" data-section="advisor">
+                    <span class="icon mr-2" data-lucide="message-square"></span>
+                    AI Advisor Chat
+                </li>
+                <li class="nav-item cursor-pointer text-sm font-medium p-2 md:px-4 md:py-3 rounded-xl transition-colors text-gray-600 hover:bg-indigo-50 hover:text-indigo-700" data-section="gamification">
+                    <span class="icon mr-2" data-lucide="sword"></span>
+                    Gamified Finance
+                </li>
+            </ul>
+
+            
+            <div class="mt-auto pt-6 border-t border-gray-200 hidden md:block">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-3">
+                        <div id="sidebar-profile-container" class="w-10 h-10 bg-indigo-200 rounded-full flex items-center justify-center text-indigo-700 font-bold text-lg overflow-hidden flex-shrink-0">
+                            <img id="sidebar-profile-img" class="hidden w-full h-full object-cover" src="" onerror="this.style.display='none'; document.getElementById('sidebar-initials-desktop').style.display='flex';" />
+                            <div id="sidebar-initials-desktop">JD</div>
+                        </div>
+                        <div>
+                            <p id="sidebar-name" class="text-sm font-semibold text-gray-800">Jane Doe</p>
+                            <p class="text-xs text-gray-500">View Profile</p>
+                        </div>
+                    </div>
+                    <button id="open-profile-modal-btn" class="p-1 rounded-full text-gray-400 hover:text-indigo-700 transition-colors">
+                         <span class="icon" data-lucide="settings" style="width: 18px; height: 18px;"></span>
+                    </button>
+                </div>
+            </div>
+        </nav>
+        
+
+        <main class="flex-1 overflow-y-auto p-4 md:p-8 pt-[70px] md:pt-8">
+
+            
+            <header class="md:hidden fixed top-0 left-0 right-0 bg-white shadow-md p-4 flex justify-between items-center z-10">
+                
+                
+                <button id="mobile-profile-toggle" class="p-0 rounded-full w-10 h-10 overflow-hidden border-2 border-indigo-400 hover:border-purple-600 transition-colors flex-shrink-0 relative z-20">
+                    <img id="mobile-profile-img" class="hidden w-full h-full object-cover" src="" onerror="this.style.display='none'; document.getElementById('mobile-initials').style.display='flex';" />
+                    <div id="mobile-initials" class="w-full h-full bg-indigo-200 flex items-center justify-center text-indigo-700 font-bold">JD</div>
+                </button>
+
+                <div class="flex items-center flex-1 justify-center">
+                    <h1 class="text-xl font-extrabold lavender-text-secondary">ZennY</h1>
+                    <p class="text-xs font-semibold uppercase tracking-widest text-gray-400 ml-2">by NEXIUM</p>
+                </div>
+
+                
+                <div class="w-10 h-10 flex-shrink-0 opacity-0"></div>
+            </header>
+
+            
+            <section id="dashboard" class="main-section transition-opacity duration-300 ease-in-out opacity-100">
+                <h2 class="text-3xl font-bold lavender-text-dark mb-6 flex justify-between items-center">
+                    <span id="welcome-message">Welcome back, Jane!</span>
+                    <button id="open-tx-modal" class="lavender-button text-sm px-4 py-2 rounded-xl flex items-center font-semibold">
+                        <span class="icon mr-1" data-lucide="plus" style="width: 16px; height: 16px;"></span>
+                        Add Transaction
+                    </button>
+                </h2>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                
+                    <div class="lavender-card p-6 rounded-2xl shadow-xl transition-shadow hover:shadow-2xl border-t-4 border-l-4 lavender-border">
+                        <div class="flex items-center justify-between">
+                            <p class="text-sm font-semibold text-gray-500">Current Balance</p>
+                            <span class="icon lavender-text-secondary" data-lucide="wallet"></span>
+                        </div>
+                        <p class="text-4xl font-extrabold mt-2 lavender-text-dark" id="current-balance">₹ 0</p>
+                        <p class="text-sm text-gray-500 mt-1 flex items-center">
+                            <span id="balance-change-icon" class="icon mr-1 text-gray-400" data-lucide="minus"></span> 
+                            <span id="balance-change-text">0.0% this month</span>
+                        </p>
+                    </div>
+
+                    
+                    <div class="lavender-card p-6 rounded-2xl shadow-xl transition-shadow hover:shadow-2xl">
+                        <div class="flex items-center justify-between">
+                            <p class="text-sm font-semibold text-gray-500">AI Insight of the Day</p>
+                            <span class="icon lavender-text-secondary" data-lucide="bot"></span>
+                        </div>
+                        <p class="text-xl font-bold mt-2 lavender-text-dark" id="ai-insight-title">Start Tracking!</p>
+                        <p class="text-sm text-gray-600 mt-1" id="ai-insight-text">Enter your first transaction to receive personalized AI insights.</p>
+                    </div>
+
+                    
+                    <div class="lavender-card p-6 rounded-2xl shadow-xl transition-shadow hover:shadow-2xl">
+                        <div class="flex items-center justify-between">
+                            
+                            <p class="text-sm font-semibold text-gray-500">Next Goal: Vacation</p>
+                            <span class="icon lavender-text-secondary" data-lucide="plane"></span>
+                        </div>
+                        <p class="text-xl font-bold mt-2 lavender-text-dark" id="goal-progress-percent">0% Complete</p>
+                        <div class="mt-3 h-2 bg-indigo-100 rounded-full">
+                            <div id="goal-progress-bar" class="h-2 bg-green-500 rounded-full" style="width: 0%;"></div>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-1" id="goal-saved-amount">₹ 0 / ₹ 30,000 Saved</p>
+                    </div>
+                </div>
+
+                
+                <div class="lavender-card p-6 rounded-2xl shadow-xl mb-8">
+                    <h3 class="text-xl font-bold lavender-text-dark mb-4 border-b pb-2 border-gray-100">Smart Expense Tracking (Recent)</h3>
+                    <div id="transactions-list" class="space-y-3">
+                    </div>
+                    <button id="open-goal-modal" class="w-full mt-4 text-center text-sm font-semibold lavender-text-secondary hover:underline">
+                        Set a New Goal or Challenge
+                    </button>
+                </div>
+
+                <div class="lavender-card p-6 rounded-2xl shadow-xl mb-8 bg-indigo-50">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-xl font-bold lavender-text-dark flex items-center">
+                            <span class="icon mr-2" data-lucide="award"></span> 
+                            Savings Streak Challenge
+                        </h3>
+                        <span id="streak-count" class="text-3xl font-extrabold text-purple-600">0 Days!</span>
+                    </div>
+                    <p class="text-gray-600 mt-2">Achieve your first daily savings goal to start your streak and challenge your friends!</p>
+                    <button id="open-challenge-modal-from-dashboard" class="mt-4 text-sm font-semibold text-white lavender-button px-4 py-2 rounded-xl">View Challenges</button>
+                </div>
+
+            </section>
+
+            
+            <section id="budget" class="main-section transition-opacity duration-300 ease-in-out hidden opacity-0">
+                <h2 class="text-3xl font-bold lavender-text-dark mb-6">AI-Powered Financial Strategy</h2>
+
+                
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                    <div class="lavender-card p-6 rounded-2xl shadow-xl">
+                        <h3 class="text-xl font-bold lavender-text-dark mb-4 border-b pb-2 border-gray-100 flex items-center">
+                            <span class="icon mr-2" data-lucide="trending-down"></span>
+                            Monthly Budget Status
+                        </h3>
+                        <p class="text-lg font-semibold text-gray-600">Total Budget Allocated: <span class="float-right text-indigo-700">₹ 15,000</span></p>
+                        <p class="text-lg font-semibold text-gray-600">Total Budget Spent: <span class="float-right text-red-500" id="budget-spent">₹ 0</span></p>
+                        <div class="mt-4">
+                            <p class="text-sm font-medium text-gray-500 mb-1">Budget Utilisation (<span id="budget-percent">0</span>%)</p>
+                            <div class="h-4 bg-indigo-100 rounded-full relative overflow-hidden">
+                                <div id="budget-bar" class="h-4 bg-red-500 rounded-full budget-bar-fill" style="--budget-fill: 0%;"></div>
+                            </div>
+                        </div>
+                        <p id="budget-ai-tip" class="text-sm mt-4 p-3 bg-indigo-50 rounded-xl text-gray-700 font-medium">
+                            <span class="icon mr-1 inline-block align-middle" data-lucide="lightbulb"></span> 
+                            AI Tip: Set up your first budget goal to get real-time spending alerts!
+                        </p>
+                    </div>
+
+                    
+                    <div class="lavender-card p-6 rounded-2xl shadow-xl">
+                        <h3 class="text-xl font-bold lavender-text-dark mb-4 border-b pb-2 border-gray-100 flex items-center">
+                            <span class="icon mr-2" data-lucide="briefcase"></span>
+                            Investment Guidance
+                        </h3>
+                        <div id="investment-guidance-list" class="space-y-4">
+                            
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="advisor" class="main-section transition-opacity duration-300 ease-in-out hidden opacity-0">
+                <h2 class="text-3xl font-bold lavender-text-dark mb-6">Personalised AI Advisor (ZennY)</h2>
+                
+                <div class="lavender-card p-6 rounded-2xl shadow-xl h-[600px] flex flex-col">
+                    <div id="ai-chat-history" class="flex-1 overflow-y-auto space-y-4 pb-4 scrollbar-hide">
+                        
+                        <div class="flex items-start">
+                            <div class="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center text-white font-bold text-xs mr-3 flex-shrink-0">AI</div>
+                            <div class="bg-indigo-100 p-3 rounded-xl rounded-tl-none max-w-xs md:max-w-md">
+                                <p class="text-sm text-gray-800">Hello <span id="chat-intro-name">Jane</span>! I am ZennY, your personal financial advisor powered by NEXIUM. How can I assist with your budget, savings, or investments today?</p>
+                            </div>
+                        </div>
+                        
+                    </div>
+
+                    <div class="pt-4 border-t border-gray-200 flex items-center">
+                        <input type="text" id="user-input" placeholder="Ask ZennY anything (e.g., 'Should I increase my SIP?')" class="flex-1 p-3 border border-gray-300 rounded-l-xl focus:ring-2 focus:ring-purple-400 focus:border-purple-400 outline-none">
+                        <button id="send-button" class="lavender-button px-6 py-3 rounded-r-xl font-semibold">
+                            <span class="icon" data-lucide="send"></span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            
+            <section id="gamification" class="main-section transition-opacity duration-300 ease-in-out hidden opacity-0">
+                <h2 class="text-3xl font-bold lavender-text-dark mb-6">Gamified Financial Decisions</h2>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+                    <div class="lavender-card p-6 rounded-2xl shadow-xl bg-purple-50">
+                        <div class="flex items-center justify-between">
+                            <span class="icon lavender-text-secondary" data-lucide="trophy"></span>
+                            <p class="text-sm font-semibold text-gray-500">My Current Streak</p>
+                        </div>
+                        <p class="text-5xl font-extrabold mt-3 text-purple-700" id="gamification-streak">0</p>
+                        <p class="text-lg font-semibold text-gray-700 mt-1">Days of High Savings</p>
+                    </div>
+
+                    
+                    <div class="lavender-card p-6 rounded-2xl shadow-xl lg:col-span-2">
+                        <h3 class="text-xl font-bold lavender-text-dark mb-4 border-b pb-2 border-gray-100 flex items-center">
+                            <span class="icon mr-2" data-lucide="users"></span>
+                            Active Collaboration Challenges
+                        </h3>
+                        
+                        <div id="active-challenges-list" class="space-y-4">
+                    
+                            <div class="text-center p-3 text-gray-500 bg-gray-50 rounded-xl">
+                                <p class="text-sm">No active challenges. Click **View Challenges** on the dashboard to start one!</p>
+                            </div>
+                        </div>
+
+                        <button id="open-challenge-modal-from-gamification" class="mt-4 lavender-button px-4 py-2 rounded-xl text-sm font-semibold">Manage Challenges</button>
+                    </div>
+
+            
+                    <div class="lavender-card p-6 rounded-2xl shadow-xl lg:col-span-3">
+                        <h3 class="text-xl font-bold lavender-text-dark mb-4 border-b pb-2 border-gray-100 flex items-center">
+                            <span class="icon mr-2" data-lucide="zap"></span>
+                            Financial Decision Quests
+                        </h3>
+                        <p class="text-gray-600 mb-4">Complete quests to earn ZennY XP and unlock exclusive investment insights.</p>
+                        
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            
+                            <div class="p-4 bg-yellow-50 rounded-xl border border-yellow-200">
+                                <p class="font-semibold text-yellow-800 flex justify-between items-center">
+                                    <span>"The Debt Buster"</span> 
+                                    <span class="icon" data-lucide="circle" style="width: 20px; height: 20px;"></span>
+                                </p>
+                                <p class="text-sm text-gray-600 mt-1">Pay 1 EMI 2 days early.</p>
+                            </div>
+                            
+                            <div class="p-4 bg-indigo-50 rounded-xl border border-indigo-200">
+                                <p class="font-semibold text-indigo-800 flex justify-between items-center">
+                                    <span>"The SIP Sentinel"</span>
+                                    <span class="icon" data-lucide="circle" style="width: 20px; height: 20px;"></span>
+                                </p>
+                                <p class="text-sm text-gray-600 mt-1">Maintain an active SIP for 3 months.</p>
+                            </div>
+                    
+                            <div class="p-4 bg-red-50 rounded-xl border border-red-200">
+                                <p class="font-semibold text-red-800 flex justify-between items-center">
+                                    <span>"Zero Waste Week"</span>
+                                    <span class="icon" data-lucide="circle" style="width: 20px; height: 20px;"></span>
+                                </p>
+                                <p class="text-sm text-gray-600 mt-1">Zero spending on fast food for 7 days.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        
+        window.transactionsData = [];
+        window.goalsData = []; 
+        window.challengesData = []; 
+
+        
+        window.currentTotalSpentThisMonth = 0; 
+        
+        
+        const PROFILE_IMAGE_KEY = 'zennY_profile_img_url';
+        
+
+        let selectedProfileBase64 = null;
+
+    
+        const investmentGuidanceData = [
+            { title: 'Tech Sector Mutual Fund', risk: 'Medium', return: '+18.5%', suggestion: 'Increase monthly SIP by ₹1,000 for diversification.' },
+            { title: 'Liquid Fund', risk: 'Low', return: '+6.2%', suggestion: 'Keep your emergency fund here for better returns than a savings account.' },
+            { title: 'Blue Chip Stocks (Reliance/TCS)', risk: 'Low', return: '+12.0%', suggestion: 'Consider a one-time lump sum of ₹10,000 based on current market dip.' },
+        ];
+
+        
+        const categoryIcons = {
+            'Salary': { icon: 'indian-rupee', emoji: '💰' },
+            'Investment Return': { icon: 'wallet', emoji: '📈' },
+            'Gift': { icon: 'gift', emoji: '🎁' },
+            'Food': { icon: 'soup', emoji: '🍜' },
+            'Drinks': { icon: 'milk-tea', emoji: '☕' },
+            'Stationery': { icon: 'pen-tool', emoji: '✏️' },
+            'Rent': { icon: 'home', emoji: '🏠' },
+            'Investment': { icon: 'trending-up', emoji: '🌟' },
+            'Groceries': { icon: 'shopping-cart', emoji: '🛒' },
+            'Online Order': { icon: 'package', emoji: '📦' },
+            'Other': { icon: 'circle', emoji: '📍' },
+        };
+
+        
+        const formatCurrency = (amount) => {
+            return `₹ ${Math.abs(amount).toLocaleString('en-IN', {
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 2,
+            })}`;
+        };
+
+        
+        const getInitials = (name) => {
+            if (!name) return 'U';
+            const parts = name.split(' ').filter(p => p.length > 0);
+            if (parts.length === 1) return parts[0].substring(0, 1).toUpperCase();
+            if (parts.length > 1) return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+            return 'U';
+        }
+        
+        
+        const updateProfilePicture = (url, initials) => {
+            const elements = [
+                { imgId: 'sidebar-profile-img', initialsId: 'sidebar-initials-desktop' },
+                { imgId: 'mobile-profile-img', initialsId: 'mobile-initials' },
+            ];
+
+        
+            const previewEl = document.getElementById('profile-modal-preview');
+
+
+            elements.forEach(({ imgId, initialsId }) => {
+                const imgEl = document.getElementById(imgId);
+                const initialsEl = document.getElementById(initialsId);
+                
+                if (initialsEl) initialsEl.textContent = initials;
+                
+                if (imgEl) {
+                    if (url) {
+                        imgEl.src = url;
+                        
+                        imgEl.onerror = function() {
+                            this.style.display = 'none';
+                            if (initialsEl) initialsEl.style.display = 'flex';
+                            if (previewEl) {
+                                previewEl.style.backgroundImage = 'none';
+                                previewEl.textContent = initials;
+                            }
+                        };
+                        imgEl.onload = function() {
+                            this.style.display = 'block';
+                            if (initialsEl) initialsEl.style.display = 'none';
+                            if (previewEl) {
+                                previewEl.style.backgroundImage = `url(${url})`;
+                                previewEl.textContent = '';
+                            }
+                        };
+                        imgEl.style.display = 'block'; 
+                        if (initialsEl) initialsEl.style.display = 'none';
+                    } else {
+                        imgEl.style.display = 'none';
+                        if (initialsEl) initialsEl.style.display = 'flex';
+                        if (previewEl) {
+                            previewEl.style.backgroundImage = 'none';
+                            previewEl.textContent = initials;
+                        }
+                    }
+                }
+            });
+            
+             if (previewEl && !url) {
+                 previewEl.textContent = initials;
+             }
+        };
+
+        
+        window.calculateDashboardMetrics = () => {
+            
+            const currentBalanceEl = document.getElementById('current-balance');
+            const balanceChangeIconEl = document.getElementById('balance-change-icon');
+            const balanceChangeTextEl = document.getElementById('balance-change-text');
+            const budgetSpentEl = document.getElementById('budget-spent');
+            const budgetPercentEl = document.getElementById('budget-percent');
+            const budgetBarEl = document.getElementById('budget-bar');
+            const insightTitleEl = document.getElementById('ai-insight-title');
+            const insightTextEl = document.getElementById('ai-insight-text');
+            
+            
+            if (!currentBalanceEl || !insightTitleEl || !balanceChangeIconEl || !budgetSpentEl) {
+                console.log("Dashboard elements not fully available yet. Skipping metric calculation.");
+                return;
+            }
+
+            let totalBalance = 0;
+            let totalIncome = 0;
+            let totalExpense = 0;
+            window.currentTotalSpentThisMonth = 0; 
+
+            
+            window.transactionsData.forEach(tx => {
+                const amount = parseFloat(tx.amount || 0);
+                if (tx.type === 'Income') {
+                    totalBalance += amount;
+                    totalIncome += amount;
+                } else if (tx.type === 'Expense') {
+                    totalBalance -= amount;
+                    totalExpense += amount;
+                    
+                    
+                    if (['Food', 'Drinks', 'Stationery', 'Groceries', 'Online Order', 'Other'].includes(tx.category)) {
+                        window.currentTotalSpentThisMonth += amount;
+                    }
+                }
+            });
+
+            const totalSavingsPotential = totalIncome - totalExpense;
+
+            
+            currentBalanceEl.textContent = formatCurrency(totalBalance);
+            currentBalanceEl.classList.toggle('text-red-500', totalBalance < 0);
+            currentBalanceEl.classList.toggle('lavender-text-dark', totalBalance >= 0);
+
+            
+            const change = totalBalance > 5000 ? 3.5 : (totalBalance > 0 ? 1.2 : 0);
+            balanceChangeTextEl.textContent = `${change.toFixed(1)}% this month`;
+            balanceChangeIconEl.setAttribute('data-lucide', change > 0 ? 'arrow-up-right' : (change < 0 ? 'arrow-down-right' : 'minus'));
+            balanceChangeTextEl.className = `text-sm mt-1 flex items-center ${change > 0 ? 'text-green-500' : (change < 0 ? 'text-red-500' : 'text-gray-500')}`;
+            balanceChangeIconEl.classList.toggle('text-green-500', change > 0);
+            balanceChangeIconEl.classList.toggle('text-red-500', change < 0);
+            balanceChangeIconEl.classList.toggle('text-gray-400', change === 0);
+
+            
+            const budgetAllocated = 15000;
+            const budgetPercent = Math.min(100, (window.currentTotalSpentThisMonth / budgetAllocated) * 100);
+            budgetSpentEl.textContent = formatCurrency(window.currentTotalSpentThisMonth);
+            budgetPercentEl.textContent = budgetPercent.toFixed(1);
+            budgetBarEl.style.width = `${budgetPercent}%`;
+            budgetBarEl.style.setProperty('--budget-fill', `${budgetPercent}%`);
+            
+            
+            const goal = window.goalsData.length > 0 ? window.goalsData[0] : null; 
+            
+            const goalNameEl = document.querySelector('#dashboard .lavender-card:nth-child(3) p.text-sm.font-semibold');
+            const goalProgressPercentEl = document.getElementById('goal-progress-percent');
+            const goalProgressBarEl = document.getElementById('goal-progress-bar');
+            const goalSavedAmountEl = document.getElementById('goal-saved-amount');
+            const goalIconEl = document.querySelector('#dashboard .lavender-card:nth-child(3) .icon');
+
+            
+            if (goalNameEl && goalIconEl && goalProgressPercentEl && goalProgressBarEl && goalSavedAmountEl) {
+                if (goal) {
+                    const target = parseFloat(goal.target);
+                    const saved = parseFloat(goal.saved);
+                    const progress = Math.min(100, (saved / target) * 100);
+                    
+                    goalNameEl.textContent = `Next Goal: ${goal.name}`;
+                    goalIconEl.setAttribute('data-lucide', 'target');
+                    goalProgressPercentEl.textContent = `${progress.toFixed(1)}% Complete`;
+                    goalProgressBarEl.style.width = `${progress}%`;
+                    
+                    const dueDate = new Date(goal.dueDate).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' });
+                    goalSavedAmountEl.textContent = `${formatCurrency(saved)} / ${formatCurrency(target)} Saved (Due: ${dueDate})`;
+                } else {
+                    goalNameEl.textContent = `Set Your First Goal`;
+                    goalIconEl.setAttribute('data-lucide', 'plane');
+                    goalProgressPercentEl.textContent = `0% Complete`;
+                    goalProgressBarEl.style.width = `0%`;
+                    goalSavedAmountEl.textContent = `₹ 0 / ₹ 30,000 Saved`;
+                }
+            }
+
+
+            if (window.transactionsData.length === 0) {
+                insightTitleEl.textContent = "Start Tracking!";
+                insightTextEl.textContent = "Enter your first transaction to receive personalized AI insights.";
+            } else if (goal && totalSavingsPotential < 0) {
+                insightTitleEl.textContent = "Caution! 🚨";
+                insightTextEl.textContent = `You are currently overspending. Reduce ${goal.name} contributions temporarily to balance cash flow.`;
+            } else if (budgetPercent > 70) {
+                insightTitleEl.textContent = "Budget Alert! ⚠️";
+                insightTextEl.textContent = `You've spent ${budgetPercent.toFixed(0)}% of your discretionary budget. Time for a **"Zero Waste Week"** quest!`;
+            } else if (totalSavingsPotential > 1000) {
+                 insightTitleEl.textContent = "Savings Potential High! 🚀";
+                 insightTextEl.textContent = `Excellent job! You have a saving potential of ${formatCurrency(totalSavingsPotential)}. Invest ₹5,000 this month.`;
+            } else {
+                 insightTitleEl.textContent = "Keep Going!";
+                 insightTextEl.textContent = "Review your spending trends to find hidden opportunities for savings.";
+            }
+
+            lucide.createIcons(); 
+        };
+
+
+        
+        window.renderTransactions = () => {
+            const list = document.getElementById('transactions-list');
+            
+            
+            if (!list) return;
+
+            list.innerHTML = '';
+            
+            if (window.transactionsData.length === 0) {
+                const placeholderHtml = `
+                    <div class="text-center p-6 text-gray-500 bg-indigo-50 rounded-xl">
+                        <span class="icon mx-auto block mb-2" data-lucide="piggy-bank" style="width: 32px; height: 32px;"></span>
+                        <p class="font-semibold">Your Wallet is Empty.</p>
+                        <p class="text-sm">Tap **Add Transaction** to begin activating AI tracking.</p>
+                    </div>
+                `;
+                list.insertAdjacentHTML('beforeend', placeholderHtml);
+            } else {
+                window.transactionsData.slice(0, 4).forEach(tx => { 
+                    const sign = tx.type === 'Expense' ? '-' : '+';
+                    const textColor = tx.type === 'Expense' ? 'text-red-600' : 'text-green-600';
+                    const bgColor = tx.type === 'Expense' ? 'bg-red-50' : 'bg-green-50';
+                    
+                    const cleanCategory = tx.category.replace(/[^a-zA-Z\s]/g, '').trim(); 
+                    const categoryInfo = categoryIcons[cleanCategory] || { icon: 'circle', emoji: '❓' };
+                    const emoji = categoryInfo.emoji;
+
+
+                    const html = `
+                        <div class="flex items-center justify-between p-3 rounded-xl ${bgColor} hover:shadow-lg transition-all border border-transparent hover:border-indigo-200">
+                            <div class="flex items-center space-x-3">
+                                <!-- Display Emoji -->
+                                <div class="w-10 h-10 bg-indigo-200 rounded-full flex items-center justify-center text-indigo-700 font-bold text-lg flex-shrink-0">
+                                    ${emoji}
+                                </div>
+                                <div>
+                                    <p class="font-semibold text-gray-800">${tx.category}</p>
+                                    <p class="text-xs text-gray-500">${tx.type} · ${new Date(tx.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}</p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <!-- Prominent amount display -->
+                                <p class="font-bold text-lg ${textColor}">${sign} ${formatCurrency(tx.amount)}</p>
+                                <p class="text-xs text-gray-500">ZennY Tagged</p>
+                            </div>
+                        </div>
+                    `;
+                    list.insertAdjacentHTML('beforeend', html);
+                });
+            }
+            
+            lucide.createIcons();
+        };
+
+        
+        window.renderChallenges = () => {
+            const list = document.getElementById('active-challenges-list');
+            const modalList = document.getElementById('challenge-list-container');
+          
+            if (!list || !modalList) return;
+
+            const renderList = (container, isModal) => {
+                container.innerHTML = '';
+                if (window.challengesData.length === 0) {
+                    const placeholderHtml = `
+                        <div class="text-center p-3 text-gray-500 ${isModal ? 'bg-white' : 'bg-gray-50'} rounded-xl">
+                            <p class="text-sm">No active challenges. Click **New Challenge** to start one!</p>
+                        </div>
+                    `;
+                    container.insertAdjacentHTML('beforeend', placeholderHtml);
+                } else {
+                    window.challengesData.forEach(ch => {
+                        const target = parseFloat(ch.target);
+                        
+                 
+                        const progress = Math.min(100, (window.currentTotalSpentThisMonth / target) * 100); 
+                        const statusColor = progress >= 100 ? 'text-green-600' : 'text-purple-600';
+                        const statusText = progress >= 100 ? 'Completed!' : `${progress.toFixed(0)}% Done`;
+
+                        const html = `
+                            <div class="flex justify-between items-center p-3 rounded-xl bg-white border-l-4 lavender-border shadow-sm">
+                                <div class="flex-1 min-w-0">
+                                    <p class="font-semibold text-gray-800">${ch.name}</p>
+                                    <p class="text-xs text-gray-600 truncate">vs. ${ch.friend || 'Self-Challenge'} | Target: ${formatCurrency(target)}</p>
+                                </div>
+                                <div class="text-right ml-4">
+                                    <p class="text-sm font-bold ${statusColor}">${statusText}</p>
+                                    <p class="text-xs text-gray-500">Status</p>
+                                </div>
+                            </div>
+                        `;
+                        container.insertAdjacentHTML('beforeend', html);
+                    });
+                }
+            };
+
+            renderList(list, false);
+            renderList(modalList, true);
+        }
+
+        
+        const addTransaction = async (type, amount, category, date) => {
+            if (window.isFirestoreAvailable) {
+                if (!window.db || !window.userId || !window.addDoc || !window.collection) {
+                    console.error("Firebase resources missing for transaction.");
+                    return;
+                }
+                const transactionsPath = `/artifacts/${window.appId}/users/${window.userId}/transactions`;
+                const cleanCategory = category.replace(/[^a-zA-Z\s]/g, '').trim(); 
+                await window.addDoc(window.collection(window.db, transactionsPath), {
+                    type,
+                    amount: parseFloat(amount),
+                    category: cleanCategory,
+                    date,
+                    timestamp: window.serverTimestamp ? window.serverTimestamp() : new Date(),
+                });
+            } else {
+
+                await window.addDoc({ path: 'transactions' }, { type, amount: parseFloat(amount), category, date });
+            }
+            console.log("Transaction saved.");
+        };
+
+
+        const addGoal = async (name, target, saved, date) => {
+            if (window.isFirestoreAvailable) {
+                if (!window.db || !window.userId || !window.addDoc || !window.collection) {
+                    console.error("Firebase resources missing for goal.");
+                    return;
+                }
+                const goalsPath = `/artifacts/${window.appId}/users/${window.userId}/goals`;
+                await window.addDoc(window.collection(window.db, goalsPath), {
+                    name,
+                    target: parseFloat(target),
+                    saved: parseFloat(saved),
+                    dueDate: date,
+                    createdAt: window.serverTimestamp ? window.serverTimestamp() : new Date(),
+                });
+            } else {
+                
+                await window.addDoc({ path: 'goals' }, { name, target: parseFloat(target), saved: parseFloat(saved), dueDate: date });
+            }
+            console.log("Goal saved.");
+        };
+
+
+        const addChallenge = async (name, target, friend) => {
+            if (window.isFirestoreAvailable) {
+                if (!window.db || !window.userId || !window.addDoc || !window.collection) {
+                    console.error("Firebase resources missing for challenge.");
+                    return;
+                }
+                const challengesPath = `/artifacts/${window.appId}/users/${window.userId}/challenges`;
+                await window.addDoc(window.collection(window.db, challengesPath), {
+                    name,
+                    target: parseFloat(target),
+                    friend: friend || 'Self-Challenge',
+                    status: 'Active',
+                    progress: 0,
+                    createdAt: window.serverTimestamp ? window.serverTimestamp() : new Date(),
+                });
+            } else {
+                
+                await window.addDoc({ path: 'challenges' }, { name, target: parseFloat(target), friend: friend || 'Self-Challenge', status: 'Active', progress: 0 });
+            }
+            console.log("Challenge saved.");
+        };
+const openModal = (modalEl) => {
+            modalEl.classList.remove('invisible', 'opacity-0');
+            modalEl.classList.add('visible', 'opacity-100');
+            modalEl.querySelector('.modal-content').classList.remove('translate-y-full');
+            modalEl.querySelector('.modal-content').classList.add('translate-y-0');
+        };
+
+        const closeModal = (modalEl) => {
+            modalEl.classList.remove('visible', 'opacity-100');
+            modalEl.classList.add('invisible', 'opacity-0');
+            modalEl.querySelector('.modal-content').classList.remove('translate-y-0');
+            modalEl.querySelector('.modal-content').classList.add('translate-y-full');
+
+            const form = modalEl.querySelector('form');
+            if (form) form.reset();
+            
+            if (modalEl === transactionModal) {
+                 document.getElementById('tx-date').valueAsDate = new Date();
+            } else if (modalEl === challengeModal) {
+                 
+                 document.getElementById('challenge-form').classList.add('hidden');
+            } else if (modalEl === profileModal) {
+                 
+                 selectedProfileBase64 = null;
+                 document.getElementById('profile-img-file-input').value = null;
+            }
+        };
+
+
+        const transactionModal = document.getElementById('transaction-modal');
+        const transactionForm = document.getElementById('transaction-form');
+        const openTxModalButton = document.getElementById('open-tx-modal');
+        const closeTxModalButton = document.getElementById('close-tx-modal');
+
+        openTxModalButton.addEventListener('click', () => {
+            openModal(transactionModal);
+            document.getElementById('tx-amount').focus();
+        });
+        closeTxModalButton.addEventListener('click', () => closeModal(transactionModal));
+        
+        transactionForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const type = document.getElementById('tx-type').value;
+            const amount = document.getElementById('tx-amount').value;
+            const category = document.getElementById('tx-category').value; 
+            const date = document.getElementById('tx-date').value;
+
+            closeModal(transactionModal);
+            
+            await addTransaction(type, amount, category, date);
+        });
+
+        document.getElementById('tx-date').valueAsDate = new Date();
+
+
+        const goalModal = document.getElementById('goal-modal');
+        const goalForm = document.getElementById('goal-form');
+        const openGoalModalButton = document.getElementById('open-goal-modal');
+        const closeGoalModalButton = document.getElementById('close-goal-modal');
+
+        openGoalModalButton.addEventListener('click', () => {
+            openModal(goalModal);
+            document.getElementById('goal-name-input').focus();
+
+            const defaultDate = new Date();
+            defaultDate.setMonth(defaultDate.getMonth() + 3);
+            document.getElementById('goal-date-input').valueAsDate = defaultDate;
+        });
+        closeGoalModalButton.addEventListener('click', () => closeModal(goalModal));
+
+        goalForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('goal-name-input').value;
+            const target = document.getElementById('goal-target-input').value;
+            const saved = document.getElementById('goal-saved-input').value;
+            const date = document.getElementById('goal-date-input').value;
+
+            closeModal(goalModal);
+            
+            await addGoal(name, target, saved, date);
+            showSection('dashboard'); 
+        });
+        
+const challengeModal = document.getElementById('challenge-modal');
+        const challengeForm = document.getElementById('challenge-form');
+        const openChallengeModalFromDashboard = document.getElementById('open-challenge-modal-from-dashboard');
+        const openChallengeModalFromGamification = document.getElementById('open-challenge-modal-from-gamification');
+        const closeChallengeModalButton = document.getElementById('close-challenge-modal');
+        const addNewChallengeBtn = document.getElementById('add-new-challenge-btn');
+        const cancelNewChallengeBtn = document.getElementById('cancel-new-challenge');
+
+        const openChallengeModal = () => {
+             openModal(challengeModal);
+
+        };
+
+        openChallengeModalFromDashboard.addEventListener('click', openChallengeModal);
+        openChallengeModalFromGamification.addEventListener('click', openChallengeModal);
+        closeChallengeModalButton.addEventListener('click', () => closeModal(challengeModal));
+
+        addNewChallengeBtn.addEventListener('click', () => {
+            challengeForm.classList.remove('hidden');
+            challengeForm.reset();
+            document.getElementById('challenge-name-input').focus();
+        });
+        
+        cancelNewChallengeBtn.addEventListener('click', () => {
+            challengeForm.classList.add('hidden');
+        });
+
+        challengeForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('challenge-name-input').value;
+            const target = document.getElementById('challenge-target-input').value;
+            const friend = document.getElementById('challenge-friend-input').value;
+            
+            challengeForm.classList.add('hidden');
+            
+            await addChallenge(name, target, friend);
+
+        });
+
+
+        const profileModal = document.getElementById('profile-modal');
+        const profileForm = document.getElementById('profile-form');
+        const openProfileModalBtn = document.getElementById('open-profile-modal-btn');
+        const closeProfileModalBtn = document.getElementById('close-profile-modal');
+        const clearProfileImgBtn = document.getElementById('clear-profile-img');
+        const profileImgUrlInput = document.getElementById('profile-img-url-input');
+        const profileImgFileInput = document.getElementById('profile-img-file-input'); 
+
+        const handleFileSelect = (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            if (file.size > 1024 * 1024 * 0.5) { 
+                alert("Please select an image smaller than 500KB.");
+                event.target.value = '';
+                selectedProfileBase64 = null;
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const userName = document.getElementById('sidebar-name').textContent;
+                const initials = getInitials(userName);
+                selectedProfileBase64 = e.target.result;
+               
+                updateProfilePicture(selectedProfileBase64, initials);
+                
+                profileImgUrlInput.value = '';
+            };
+            reader.readAsDataURL(file);
+        };
+
+        profileImgFileInput.addEventListener('change', handleFileSelect); 
+
+        openProfileModalBtn.addEventListener('click', () => {
+            
+            profileImgUrlInput.value = localStorage.getItem(PROFILE_IMAGE_KEY) || '';
+            selectedProfileBase64 = null; 
+            profileImgFileInput.value = null;
+            openModal(profileModal);
+        });
+
+        closeProfileModalBtn.addEventListener('click', () => closeModal(profileModal));
+        
+        clearProfileImgBtn.addEventListener('click', () => {
+            profileImgUrlInput.value = '';
+            profileImgFileInput.value = null; 
+            selectedProfileBase64 = null; 
+            const initials = getInitials(document.getElementById('sidebar-name').textContent);
+            updateProfilePicture('', initials);
+        });
+
+        profileForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const newUrlFromInput = profileImgUrlInput.value.trim();
+            const userName = document.getElementById('sidebar-name').textContent;
+            const initials = getInitials(userName);
+            
+            let finalUrl = null;
+
+            if (selectedProfileBase64) {
+                
+                finalUrl = selectedProfileBase64;
+            } else if (newUrlFromInput) {
+               
+                finalUrl = newUrlFromInput;
+            }
+
+            if (finalUrl) {
+                localStorage.setItem(PROFILE_IMAGE_KEY, finalUrl);
+            } else {
+                localStorage.removeItem(PROFILE_IMAGE_KEY);
+            }
+            
+            updateProfilePicture(finalUrl, initials);
+            closeModal(profileModal);
+        });
+       
+        const renderInvestmentGuidance = () => {
+            const list = document.getElementById('investment-guidance-list');
+             if (!list) return; 
+            
+            list.innerHTML = '';
+
+            investmentGuidanceData.forEach(guidance => {
+                const riskColor = guidance.risk === 'Low' ? 'text-green-500' : (guidance.risk === 'Medium' ? 'text-orange-500' : 'text-red-500');
+                
+                const html = `
+                    <div class="p-4 bg-indigo-50 rounded-xl border border-indigo-200">
+                        <h4 class="font-bold text-gray-800">${guidance.title}</h4>
+                        <div class="flex justify-between text-xs mt-1">
+                            <span class="font-medium">Risk: <span class="${riskColor}">${guidance.risk}</span></span>
+                            <span class="font-medium">Return (YTD): <span class="text-green-600">${guidance.return}</span></span>
+                        </div>
+                        <p class="text-sm text-gray-600 mt-2 flex items-start">
+                            <span class="icon mr-2 flex-shrink-0" data-lucide="bot" style="width: 16px; height: 16px;"></span>
+                            ${guidance.suggestion}
+                        </p>
+                    </div>
+                `;
+                list.insertAdjacentHTML('beforeend', html);
+            });
+            lucide.createIcons();
+        };
+        
+        
+        const sections = document.querySelectorAll('.main-section');
+        const navItems = document.querySelectorAll('.nav-item');
+
+        const showSection = (targetId) => {
+            sections.forEach(section => {
+                const isActive = section.id === targetId;
+                section.classList.toggle('hidden', !isActive);
+                section.classList.toggle('opacity-0', !isActive);
+                section.classList.toggle('opacity-100', isActive);
+            });
+
+            navItems.forEach(item => {
+                const isActive = item.dataset.section === targetId;
+                item.classList.toggle('bg-indigo-100/50', isActive);
+                item.classList.toggle('text-indigo-700', isActive);
+                item.classList.toggle('text-gray-600', !isActive);
+                item.classList.toggle('hover:bg-indigo-50', !isActive);
+                item.classList.toggle('hover:text-indigo-700', !isActive);
+            });
+
+            const sidebar = document.getElementById('sidebar');
+            if (window.innerWidth < 768) {
+                 sidebar.style.transform = 'translateX(-100%)';
+            }
+        };
+
+        navItems.forEach(item => {
+            item.addEventListener('click', (e) => {
+                showSection(item.dataset.section);
+            });
+        });
+
+        
+        const sidebar = document.getElementById('sidebar');
+        const mobileProfileToggle = document.getElementById('mobile-profile-toggle'); 
+        const appContainer = document.getElementById('app');
+        
+        sidebar.style.transform = 'translateX(-100%)';
+
+       
+        mobileProfileToggle.addEventListener('click', () => {
+            const isHidden = sidebar.style.transform === 'translateX(-100%)' || sidebar.style.transform === '';
+            sidebar.style.transform = isHidden ? 'translateX(0)' : 'translateX(-100%)';
+        });
+
+        window.addEventListener('resize', () => {
+            if (window.innerWidth >= 768) {
+                sidebar.style.transform = 'translateX(0)';
+            } else {
+                sidebar.style.transform = 'translateX(-100%)';
+            }
+        });
+
+       
+        let touchStartX = 0;
+        const swipeThreshold = 60; 
+
+        const handleTouchStart = (e) => {
+            if (e.touches.length === 1 && window.innerWidth < 768) {
+                touchStartX = e.touches[0].clientX;
+            }
+        };
+
+        const handleTouchEnd = (e) => {
+            if (window.innerWidth >= 768) return;
+            if (touchStartX === 0) return; 
+            
+            const touchEndX = e.changedTouches[0].clientX;
+            const deltaX = touchEndX - touchStartX;
+            
+            const isSidebarOpen = sidebar.style.transform === 'translateX(0px)'; 
+
+            if (deltaX > swipeThreshold) {
+                
+                sidebar.style.transform = 'translateX(0)';
+            } else if (deltaX < -swipeThreshold && isSidebarOpen) {
+               
+                sidebar.style.transform = 'translateX(-100%)';
+            }
+            
+           
+            touchStartX = 0;
+        };
+        
+       
+        document.body.addEventListener('touchstart', handleTouchStart, { passive: true });
+        document.body.addEventListener('touchend', handleTouchEnd, { passive: true });
+       
+
+
+       
+        const chatHistory = document.getElementById('ai-chat-history');
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        
+
+        const simulateAIResponse = (userMessage) => {
+            let aiMessage = "I'm still learning! For now, here is a mock response: ";
+            const lowerMsg = userMessage.toLowerCase();
+            
+            
+            const totalSpent = window.currentTotalSpentThisMonth;
+
+            if (lowerMsg.includes('sip') || lowerMsg.includes('invest')) {
+                aiMessage += "Based on your current cash flow and investment risk profile, I recommend increasing your Tech Sector SIP by **₹500**. This will keep you on track for your 5-year goal.";
+            } else if (lowerMsg.includes('budget') || lowerMsg.includes('groceries') || lowerMsg.includes('spent')) {
+                aiMessage += `Your current discretionary spending this month is **${formatCurrency(totalSpent)}**. Try the **'Zero Waste Week'** quest to gamify your spending reduction and save money!`;
+            } else if (lowerMsg.includes('challenge') || lowerMsg.includes('streak')) {
+                aiMessage += `You currently have **${window.challengesData.length} active challenge(s)**. Focus on completing **"${window.challengesData[0]?.name || 'a new one'}"** to keep your finance gamified!`;
+            } else {
+                aiMessage += "That's a great question. As a personal financial advisor, I can analyze your spending patterns, suggest budget optimizations, and provide personalized investment guidance.";
+            }
+
+            setTimeout(() => {
+                addMessageToChat(aiMessage, 'ai');
+            }, 1000);
+        };
+
+        const addMessageToChat = (message, sender) => {
+          
+            if (!chatHistory) return;
+
+            const isAI = sender === 'ai';
+            const bgColor = isAI ? 'bg-indigo-100' : 'bg-purple-600';
+            const textColor = isAI ? 'text-gray-800' : 'text-white';
+            const align = isAI ? 'items-start' : 'items-end justify-end';
+            const cornerClass = isAI ? 'rounded-tl-none' : 'rounded-br-none';
+            const iconContent = isAI ? '<div class="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center text-white font-bold text-xs mr-3 flex-shrink-0">AI</div>' : '';
+            const marginClass = isAI ? 'mr-auto' : 'ml-auto';
+
+
+            const messageHtml = `
+                <div class="flex ${align}">
+                    ${isAI ? iconContent : ''}
+                    <div class="${bgColor} p-3 rounded-xl ${cornerClass} max-w-xs md:max-w-md ${textColor} ${marginClass}">
+                        <p class="text-sm">${message}</p>
+                    </div>
+                    ${!isAI ? iconContent : ''}
+                </div>
+            `;
+            chatHistory.insertAdjacentHTML('beforeend', messageHtml);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        };
+
+        const handleSend = () => {
+            const message = userInput.value.trim();
+            if (message === '') return;
+
+            addMessageToChat(message, 'user');
+            simulateAIResponse(message);
+            userInput.value = '';
+        };
+
+        sendButton.addEventListener('click', handleSend);
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                handleSend();
+            }
+        });
+
+
+       
+        const initializeApp = (userName) => {
+            const firstName = userName.split(' ')[0];
+            const initials = getInitials(userName);
+            const savedImgUrl = localStorage.getItem(PROFILE_IMAGE_KEY);
+
+         
+            if (document.getElementById('welcome-message')) document.getElementById('welcome-message').textContent = `Welcome back, ${firstName}!`;
+            if (document.getElementById('sidebar-name')) document.getElementById('sidebar-name').textContent = userName;
+            if (document.getElementById('chat-intro-name')) document.getElementById('chat-intro-name').textContent = firstName;
+            
+        
+            updateProfilePicture(savedImgUrl, initials);
+            
+            renderInvestmentGuidance();
+            showSection('dashboard');
+            
+            appContainer.classList.remove('opacity-0');
+        };
+
+        
+        const nameModalOverlay = document.getElementById('name-modal-overlay');
+        const nameInput = document.getElementById('user-name-input');
+        const startButton = document.getElementById('start-app-button');
+
+        const handleStartApp = () => {
+            let userName = nameInput.value.trim();
+
+            if (userName.length < 2) {
+                nameInput.classList.add('border-red-500', 'ring-red-200');
+                nameInput.placeholder = "Name is required!";
+                return;
+            }
+            nameInput.classList.remove('border-red-500', 'ring-red-200');
+
+            nameModalOverlay.classList.remove('opacity-100');
+            nameModalOverlay.classList.add('opacity-0', 'pointer-events-none');
+            
+            initializeApp(userName);
+        };
+
+        startButton.addEventListener('click', handleStartApp);
+        nameInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                handleStartApp();
+            }
+        });
+
+        
+        window.onload = () => {
+            lucide.createIcons();
+            nameInput.focus();
+        };
+    </script>
+</body>
+</html>
